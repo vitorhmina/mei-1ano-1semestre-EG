@@ -1,0 +1,79 @@
+// ---------- syntax ----------
+start: "program" ID "{" decl* "}"
+
+?decl: var_decl | const_decl | exercise_decl | routine_decl
+
+var_decl: "var" ID ":" type "=" expr ";"
+const_decl: "const" ID ":" type "=" expr ";"
+?type: T_INT | T_FLOAT | T_BOOL | T_STRING
+
+exercise_decl: "exercise" ID "{" attr ("," attr)* "}"
+attr: ID ":" expr
+
+routine_decl: "routine" ID "{" week+ "}"
+week: "week" INT "{" session+ "}"
+session: "session" STRING block
+
+block: "{" stmt* "}"
+
+?stmt: var_decl | const_decl | assign | perform | rest
+     | if_stmt | repeat | circuit
+
+assign: ID "=" expr ";"
+perform: "do" ID "sets" expr "reps" expr load? rpe? ";"
+load: "load" expr
+rpe: "rpe" expr
+rest: "rest" expr ";"
+if_stmt: "if" "(" expr ")" block ("else" block)?
+repeat: "repeat" expr "times" block
+circuit: "circuit" "rounds" expr block
+
+// expressions: precedence/associativity encoded in the layers
+// or < and < not < relational < additive < multiplicative < unary minus
+?expr: or_e
+?or_e: and_e | or_e "or" and_e -> or_
+?and_e: not_e | and_e "and" not_e -> and_
+?not_e: rel_e | "not" not_e -> not_
+?rel_e: add_e | add_e (EQ | NE | LE | GE | LT | GT) add_e -> rel
+?add_e: mul_e
+      | add_e PLUS mul_e  -> plus
+      | add_e MINUS mul_e -> minus
+?mul_e: unary_e
+      | mul_e STAR unary_e  -> times
+      | mul_e SLASH unary_e -> divide
+?unary_e: atom | MINUS unary_e -> neg
+?atom: INT     -> int_lit
+     | FLOAT   -> float_lit
+     | STRING  -> str_lit
+     | "true"  -> true
+     | "false" -> false
+     | ID      -> var
+     | "(" expr ")"
+
+// ---------- lexical ----------
+EQ: "=="
+NE: "!="
+LE: "<="
+GE: ">="
+LT: "<"
+GT: ">"
+
+PLUS: "+"
+MINUS: "-"
+STAR: "*"
+SLASH: "/"
+
+T_INT: "int"
+T_FLOAT: "float"
+T_BOOL: "bool"
+T_STRING: "string"
+
+FLOAT.2: /[0-9]+\.[0-9]+/
+INT: /[0-9]+/
+STRING: /"[^"\n]*"/
+ID: /[A-Za-z_][A-Za-z0-9_]*/
+
+COMMENT: /\/\/[^\n]*/
+%import common.WS
+%ignore WS
+%ignore COMMENT
