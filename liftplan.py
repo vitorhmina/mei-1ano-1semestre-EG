@@ -44,9 +44,11 @@ class Checker(Interpreter):
         self.env.insert("last_rpe", Entry("float", "builtin", None))
         self.env.insert("fatigue", Entry("int", "builtin", None))
         self.errors = []
-        self.sessions = {}            # (week, session name) -> guaranteed volume
+        self.sessions = {}            # (week, day, session name) -> guaranteed volume
         self.expected_week = 1
         self.current_week = 0
+        self.days_seen = set()
+        self.current_day = None
         self.session_names = set()
 
     # ---- helpers --------------------------------------------------------
@@ -102,7 +104,7 @@ class Checker(Interpreter):
         if t not in ("string", ERR):
             self.err(key, f"attribute '{key}' must be a string")
 
-    # ---- routine / week / session --------------------------------------
+    # ---- routine / week / day / session --------------------------------
     def routine_decl(self, tree):
         self.expected_week = 1
         return sum(self.visit(w) for w in tree.children[1:])
@@ -114,20 +116,30 @@ class Checker(Interpreter):
                      f"week {num} out of sequence (expected {self.expected_week})")
         self.expected_week = num + 1
         self.current_week = num
-        self.session_names = set()
+        self.days_seen = set()
         self.env.push()
-        vol = sum(self.visit(s) for s in tree.children[1:])
+        vol = sum(self.visit(d) for d in tree.children[1:])
         self.env.pop()
         return vol
+
+    def day(self, tree):
+        day_tok, *sessions = tree.children
+        day = str(day_tok)
+        if day in self.days_seen:
+            self.err(day_tok, f"duplicate day {day} in week {self.current_week}")
+        self.days_seen.add(day)
+        self.current_day = day
+        self.session_names = set()                      # names are unique within a day
+        return sum(self.visit(s) for s in sessions)
 
     def session(self, tree):
         name_tok, block = tree.children
         name = str(name_tok).strip('"')
         if name in self.session_names:
-            self.err(name_tok, f"duplicate session {name_tok} in week {self.current_week}")
+            self.err(name_tok, f"duplicate session {name_tok} on {self.current_day}")
         self.session_names.add(name)
         vol = self.visit(block)
-        self.sessions[(self.current_week, name)] = vol
+        self.sessions[(self.current_week, self.current_day, name)] = vol
         return vol
 
     # ---- statements (return the guaranteed volume) ----------------------
@@ -296,6 +308,7 @@ if __name__ == "__main__":
         print("\n".join(errors))
         sys.exit(1)
     print("OK - no semantic errors")
-    for (week, name), vol in sessions.items():
-        print(f"  week {week}, session {name!r}: guaranteed volume {vol}")
+    for (week, day, name), vol in sessions.items():
+        print(f"  week {week}, {day}, session {name!r}: guaranteed volume {vol}")
     print(f"  program total: {total}")
+    

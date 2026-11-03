@@ -11,7 +11,8 @@ exercise_decl: "exercise" ID "{" attr ("," attr)* "}"
 attr: ID ":" expr
 
 routine_decl: "routine" ID "{" week+ "}"
-week: "week" INT "{" session+ "}"
+week: "week" INT "{" day+ "}"
+day: DAY "{" session+ "}"
 session: "session" STRING block
 
 block: "{" stmt* "}"
@@ -72,6 +73,7 @@ FLOAT.2: /[0-9]+\.[0-9]+/
 INT: /[0-9]+/
 STRING: /"[^"\n]*"/
 ID: /[A-Za-z_][A-Za-z0-9_]*/
+DAY: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday"
 
 COMMENT: /\/\/[^\n]*/
 %import common.WS

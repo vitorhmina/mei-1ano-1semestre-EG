@@ -1,33 +1,56 @@
-program HypertrophyBlock {
-    const base : float = 80.0;
-    const target_rpe : float = 8.0;
+program UpperLower {
+    const squat_1rm : float = 140.0;
+    const bench_1rm : float = 100.0;
 
-    exercise BarbellSquat { category: "lower", equipment: "barbell" }
-    exercise PullUp       { category: "upper", equipment: "bodyweight" }
+    exercise Squat            { category: "lower", equipment: "barbell" }
+    exercise RomanianDeadlift { category: "lower", equipment: "barbell" }
+    exercise BenchPress       { category: "upper", equipment: "barbell" }
+    exercise Row              { category: "upper", equipment: "barbell" }
+    exercise PullUp           { category: "upper", equipment: "bodyweight" }
 
-    routine StrengthPhase {
+    routine Strength {
         week 1 {
-            session "Monday" {
-                var w : float = base * 0.9 + 400;
-                do BarbellSquat sets 4 reps 8 load base rpe target_rpe;
-                rest 120;
-                if (last_rpe > 9.0) {
-                    w = w * 0.9;
-                } else {
-                    w = w + 2.5;
+            monday {
+                session "Lower" {
+                    var back_off : float = squat_1rm * 0.65;
+                    do Squat sets 4 reps 5 load squat_1rm * 0.75 rpe 7;
+                    rest 180;
+                    if (last_rpe > 9.0) {                  // autorregulação
+                        back_off = back_off - 5.0;
+                    } else {
+                        back_off = back_off + 2.5;
+                    }
+                    do Squat sets 2 reps 8 load back_off rpe 7;
+                    rest 120;
+                    do RomanianDeadlift sets 3 reps 8 load 90.0 rpe 7;
                 }
             }
-            session "Wednesday" {
-                circuit rounds 3 {
-                    do PullUp sets 1 reps 10;
-                    rest 60;
+            thursday {
+                session "Upper" {
+                    do BenchPress sets 4 reps 6 load bench_1rm * 0.75 rpe 8;
+                    rest 150;
+                    circuit rounds 3 {
+                        do Row sets 1 reps 10 load 60.0;
+                        do PullUp sets 1 reps 6 load 10.0;
+                        rest 90;
+                    }
                 }
             }
         }
         week 2 {
-            session "Monday" {
-                repeat 2 times {
-                    do BarbellSquat sets 3 reps 5 load 85.0 rpe 8;
+            monday {
+                session "Lower" {
+                    do Squat sets 4 reps 5 load squat_1rm * 0.75 + 5.0 rpe 8;
+                    rest 180;
+                    do RomanianDeadlift sets 3 reps 8 load 95.0 rpe 7;
+                }
+            }
+            thursday {
+                session "Upper" {
+                    repeat 4 times {
+                        do BenchPress sets 1 reps 6 load bench_1rm * 0.75 + 2.5 rpe 8;
+                        rest 150;
+                    }
                 }
             }
         }
