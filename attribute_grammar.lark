@@ -1,0 +1,523 @@
+ag_grammar = r"""
+// ---------- attribute declarations ----------
+SA(start)  { valid : bool }
+
+IA(decls)  { env_in : list }
+SA(decls)  { env_out : list, valid : bool }
+IA(decl)   { env_in : list }
+SA(decl)   { env_out : list, valid : bool }
+
+IA(var_decl, const_decl, exercise_decl) { env_in : list }
+SA(var_decl, const_decl, exercise_decl) { env_out : list, valid : bool }
+
+SA(type)   { t : str }
+
+IA(attrs)  { env_in : list }
+SA(attrs)  { valid : bool }
+IA(attr)   { env_in : list }
+SA(attr)   { valid : bool }
+
+IA(routine_decl) { env_in : list }
+SA(routine_decl) { valid : bool }
+
+IA(weeks)  { env_in : list }
+SA(weeks)  { count : int, valid : bool }
+IA(week)   { env_in : list, expected : int }
+SA(week)   { valid : bool }
+
+IA(days)     { env_in : list }
+SA(days)     { names : set, valid : bool }
+IA(day)      { env_in : list, seen : set }
+SA(day)      { name : str, valid : bool }
+
+IA(sessions) { env_in : list }
+SA(sessions) { names : set, valid : bool }
+IA(session)  { env_in : list, seen : set }
+SA(session)  { name : str, valid : bool }
+
+IA(block)  { env_in : list }
+SA(block)  { valid : bool }
+
+IA(stmts)  { env_in : list }
+SA(stmts)  { env_out : list, valid : bool }
+IA(stmt)   { env_in : list }
+SA(stmt)   { env_out : list, valid : bool }
+
+IA(assign, perform, rest, if_stmt, repeat, circuit) { env_in : list }
+SA(assign, perform, rest, if_stmt, repeat, circuit) { valid : bool }
+
+IA(loadopt, rpeopt) { env_in : list }
+SA(loadopt, rpeopt) { cv : any, valid : bool }
+
+IA(expr, or_e, and_e, not_e, rel_e, add_e, mul_e, unary_e, atom) { env_in : list }
+SA(expr, or_e, and_e, not_e, rel_e, add_e, mul_e, unary_e, atom) { type : str, cv : any, valid : bool }
+
+// ---------- program and declarations ----------
+start : "program" ID "{" decls "}"
+ER {
+    decls.env_in = push(BUILTINS);
+    start.valid  = decls.valid;
+}
+
+decls : decls decl
+ER {
+    decls[2].env_in  = decls[1].env_in;
+    decl.env_in      = decls[2].env_out;
+    decls[1].env_out = decl.env_out;
+    decls[1].valid   = decls[2].valid and decl.valid;
+}
+|
+ER {
+    decls.env_out = decls.env_in;
+    decls.valid   = True;
+}
+
+decl : var_decl
+ER {
+    var_decl.env_in = decl.env_in;
+    decl.env_out    = var_decl.env_out;
+    decl.valid      = var_decl.valid;
+}
+| const_decl
+ER {
+    const_decl.env_in = decl.env_in;
+    decl.env_out      = const_decl.env_out;
+    decl.valid        = const_decl.valid;
+}
+| exercise_decl
+ER {
+    exercise_decl.env_in = decl.env_in;
+    decl.env_out         = exercise_decl.env_out;
+    decl.valid           = exercise_decl.valid;
+}
+| routine_decl
+ER {
+    routine_decl.env_in = decl.env_in;
+    decl.env_out        = decl.env_in;
+    decl.valid          = routine_decl.valid;
+}
+
+var_decl : "var" ID ":" type "=" expr ";"
+ER {
+    expr.env_in = var_decl.env_in;
+    var_decl.valid = expr.valid
+                     and not declared_here(var_decl.env_in, str(ID))
+                     and compat(type.t, expr.type);
+    var_decl.env_out = insert(var_decl.env_in, str(ID), (type.t, "var", None));
+}
+
+const_decl : "const" ID ":" type "=" expr ";"
+ER {
+    expr.env_in = const_decl.env_in;
+    const_decl.valid = expr.valid
+                       and not declared_here(const_decl.env_in, str(ID))
+                       and compat(type.t, expr.type);
+    const_decl.env_out = insert(const_decl.env_in, str(ID),
+                                (type.t, "const", expr.cv if compat(type.t, expr.type) else None));
+}
+
+type : T_INT    ER { type.t = "int"; }
+     | T_FLOAT  ER { type.t = "float"; }
+     | T_BOOL   ER { type.t = "bool"; }
+     | T_STRING ER { type.t = "string"; }
+
+exercise_decl : "exercise" ID "{" attrs "}"
+ER {
+    attrs.env_in = exercise_decl.env_in;
+    exercise_decl.valid = attrs.valid
+                          and not declared_here(exercise_decl.env_in, str(ID));
+    exercise_decl.env_out = insert(exercise_decl.env_in, str(ID), (None, "exercise", None));
+}
+
+attrs : attrs "," attr
+ER {
+    attrs[2].env_in = attrs[1].env_in;
+    attr.env_in     = attrs[1].env_in;
+    attrs[1].valid  = attrs[2].valid and attr.valid;
+}
+| attr
+ER {
+    attr.env_in = attrs.env_in;
+    attrs.valid = attr.valid;
+}
+
+attr : ID ":" expr
+ER {
+    expr.env_in = attr.env_in;
+    attr.valid  = expr.valid and (expr.type == "string" or expr.type == "error");
+}
+
+// ---------- routine / week / day / session ----------
+routine_decl : "routine" ID "{" weeks "}"
+ER {
+    weeks.env_in       = routine_decl.env_in;
+    routine_decl.valid = weeks.valid;
+}
+
+weeks : weeks week
+ER {
+    weeks[2].env_in = weeks[1].env_in;
+    week.env_in     = weeks[1].env_in;
+    week.expected   = weeks[2].count + 1;
+    weeks[1].count  = weeks[2].count + 1;
+    weeks[1].valid  = weeks[2].valid and week.valid;
+}
+| week
+ER {
+    week.env_in   = weeks.env_in;
+    week.expected = 1;
+    weeks.count   = 1;
+    weeks.valid   = week.valid;
+}
+
+week : "week" INT "{" days "}"
+ER {
+    days.env_in = push(week.env_in);
+    week.valid  = (int(INT) == week.expected) and days.valid;
+}
+
+days : days day
+ER {
+    days[2].env_in = days[1].env_in;
+    day.env_in     = days[1].env_in;
+    day.seen       = days[2].names;
+    days[1].names  = days[2].names | set([day.name]);
+    days[1].valid  = days[2].valid and day.valid;
+}
+| day
+ER {
+    day.env_in = days.env_in;
+    day.seen   = set();
+    days.names = set([day.name]);
+    days.valid = day.valid;
+}
+
+day : DAY "{" sessions "}"
+ER {
+    sessions.env_in = day.env_in;
+    day.name        = str(DAY);
+    day.valid       = (day.name not in day.seen) and sessions.valid;
+}
+
+sessions : sessions session
+ER {
+    sessions[2].env_in = sessions[1].env_in;
+    session.env_in     = sessions[1].env_in;
+    session.seen       = sessions[2].names;
+    sessions[1].names  = sessions[2].names | set([session.name]);
+    sessions[1].valid  = sessions[2].valid and session.valid;
+}
+| session
+ER {
+    session.env_in = sessions.env_in;
+    session.seen   = set();
+    sessions.names = set([session.name]);
+    sessions.valid = session.valid;
+}
+
+session : "session" STRING block
+ER {
+    block.env_in  = session.env_in;
+    session.name  = str(STRING).strip('"');
+    session.valid = (session.name not in session.seen) and block.valid;
+}
+
+// ---------- statements ----------
+block : "{" stmts "}"
+ER {
+    stmts.env_in = push(block.env_in);
+    block.valid  = stmts.valid;
+}
+
+stmts : stmts stmt
+ER {
+    stmts[2].env_in  = stmts[1].env_in;
+    stmt.env_in      = stmts[2].env_out;
+    stmts[1].env_out = stmt.env_out;
+    stmts[1].valid   = stmts[2].valid and stmt.valid;
+}
+|
+ER {
+    stmts.env_out = stmts.env_in;
+    stmts.valid   = True;
+}
+
+stmt : var_decl
+ER { var_decl.env_in = stmt.env_in;
+     stmt.env_out = var_decl.env_out;   stmt.valid = var_decl.valid; }
+| const_decl
+ER { const_decl.env_in = stmt.env_in;
+     stmt.env_out = const_decl.env_out; stmt.valid = const_decl.valid; }
+| assign
+ER { assign.env_in = stmt.env_in;
+     stmt.env_out = stmt.env_in;        stmt.valid = assign.valid; }
+| perform
+ER { perform.env_in = stmt.env_in;
+     stmt.env_out = stmt.env_in;        stmt.valid = perform.valid; }
+| rest
+ER { rest.env_in = stmt.env_in;
+     stmt.env_out = stmt.env_in;        stmt.valid = rest.valid; }
+| if_stmt
+ER { if_stmt.env_in = stmt.env_in;
+     stmt.env_out = stmt.env_in;        stmt.valid = if_stmt.valid; }
+| repeat
+ER { repeat.env_in = stmt.env_in;
+     stmt.env_out = stmt.env_in;        stmt.valid = repeat.valid; }
+| circuit
+ER { circuit.env_in = stmt.env_in;
+     stmt.env_out = stmt.env_in;        stmt.valid = circuit.valid; }
+
+assign : ID "=" expr ";"
+ER {
+    expr.env_in  = assign.env_in;
+    assign.valid = expr.valid
+                   and declared(assign.env_in, str(ID))
+                   and kind_of(assign.env_in, str(ID)) == "var"
+                   and compat(type_of(assign.env_in, str(ID)), expr.type);
+}
+
+perform : "do" ID "sets" expr "reps" expr loadopt rpeopt ";"
+ER {
+    expr[1].env_in = perform.env_in;
+    expr[2].env_in = perform.env_in;
+    loadopt.env_in = perform.env_in;
+    rpeopt.env_in  = perform.env_in;
+    perform.valid  = (kind_of(perform.env_in, str(ID)) == "exercise")
+                     and expr[1].valid and expr[2].valid
+                     and integer(expr[1].type) and integer(expr[2].type)
+                     and loadopt.valid and rpeopt.valid;
+}
+
+loadopt : "load" expr
+ER {
+    expr.env_in    = loadopt.env_in;
+    loadopt.cv     = expr.cv;
+    loadopt.valid  = expr.valid and numeric(expr.type);
+}
+|
+ER {
+    loadopt.cv    = 1;
+    loadopt.valid = True;
+}
+
+rpeopt : "rpe" expr
+ER {
+    expr.env_in   = rpeopt.env_in;
+    rpeopt.cv     = expr.cv;
+    rpeopt.valid  = expr.valid and numeric(expr.type)
+                    and (expr.cv is None or (1 <= expr.cv and expr.cv <= 10));
+}
+|
+ER {
+    rpeopt.cv    = None;
+    rpeopt.valid = True;
+}
+
+rest : "rest" expr ";"
+ER {
+    expr.env_in = rest.env_in;
+    rest.valid  = expr.valid and numeric(expr.type);
+}
+
+if_stmt : "if" "(" expr ")" block
+ER {
+    expr.env_in    = if_stmt.env_in;
+    block.env_in   = if_stmt.env_in;
+    if_stmt.valid  = expr.valid and boolean(expr.type) and block.valid;
+}
+| "if" "(" expr ")" block "else" block
+ER {
+    expr.env_in     = if_stmt.env_in;
+    block[1].env_in = if_stmt.env_in;
+    block[2].env_in = if_stmt.env_in;
+    if_stmt.valid   = expr.valid and boolean(expr.type)
+                      and block[1].valid and block[2].valid;
+}
+
+repeat : "repeat" expr "times" block
+ER {
+    expr.env_in   = repeat.env_in;
+    block.env_in  = repeat.env_in;
+    repeat.valid  = expr.valid and integer(expr.type) and block.valid;
+}
+
+circuit : "circuit" "rounds" expr block
+ER {
+    expr.env_in   = circuit.env_in;
+    block.env_in  = circuit.env_in;
+    circuit.valid = expr.valid and integer(expr.type) and block.valid;
+}
+
+// ---------- expressions ----------
+expr : or_e
+ER {
+    or_e.env_in = expr.env_in;
+    expr.type = or_e.type;  expr.cv = or_e.cv;  expr.valid = or_e.valid;
+}
+
+or_e : and_e
+ER {
+    and_e.env_in = or_e.env_in;
+    or_e.type = and_e.type;  or_e.cv = and_e.cv;  or_e.valid = and_e.valid;
+}
+| or_e "or" and_e
+ER {
+    or_e[2].env_in = or_e[1].env_in;
+    and_e.env_in   = or_e[1].env_in;
+    or_e[1].type   = "bool";
+    or_e[1].cv     = None;
+    or_e[1].valid  = or_e[2].valid and and_e.valid
+                     and boolean(or_e[2].type) and boolean(and_e.type);
+}
+
+and_e : not_e
+ER {
+    not_e.env_in = and_e.env_in;
+    and_e.type = not_e.type;  and_e.cv = not_e.cv;  and_e.valid = not_e.valid;
+}
+| and_e "and" not_e
+ER {
+    and_e[2].env_in = and_e[1].env_in;
+    not_e.env_in    = and_e[1].env_in;
+    and_e[1].type   = "bool";
+    and_e[1].cv     = None;
+    and_e[1].valid  = and_e[2].valid and not_e.valid
+                      and boolean(and_e[2].type) and boolean(not_e.type);
+}
+
+not_e : rel_e
+ER {
+    rel_e.env_in = not_e.env_in;
+    not_e.type = rel_e.type;  not_e.cv = rel_e.cv;  not_e.valid = rel_e.valid;
+}
+| "not" not_e
+ER {
+    not_e[2].env_in = not_e[1].env_in;
+    not_e[1].type   = "bool";
+    not_e[1].cv     = None;
+    not_e[1].valid  = not_e[2].valid and boolean(not_e[2].type);
+}
+
+rel_e : add_e
+ER {
+    add_e.env_in = rel_e.env_in;
+    rel_e.type = add_e.type;  rel_e.cv = add_e.cv;  rel_e.valid = add_e.valid;
+}
+| add_e RELOP add_e
+ER {
+    add_e[1].env_in = rel_e.env_in;
+    add_e[2].env_in = rel_e.env_in;
+    rel_e.type  = "bool";
+    rel_e.cv    = None;
+    rel_e.valid = add_e[1].valid and add_e[2].valid
+                  and comparable(str(RELOP), add_e[1].type, add_e[2].type);
+}
+
+add_e : mul_e
+ER {
+    mul_e.env_in = add_e.env_in;
+    add_e.type = mul_e.type;  add_e.cv = mul_e.cv;  add_e.valid = mul_e.valid;
+}
+| add_e PLUS mul_e
+ER {
+    add_e[2].env_in = add_e[1].env_in;
+    mul_e.env_in    = add_e[1].env_in;
+    add_e[1].type   = arith(add_e[2].type, mul_e.type);
+    add_e[1].cv     = fold("+", add_e[1].type, add_e[2].cv, mul_e.cv);
+    add_e[1].valid  = add_e[2].valid and mul_e.valid
+                      and numeric(add_e[2].type) and numeric(mul_e.type);
+}
+| add_e MINUS mul_e
+ER {
+    add_e[2].env_in = add_e[1].env_in;
+    mul_e.env_in    = add_e[1].env_in;
+    add_e[1].type   = arith(add_e[2].type, mul_e.type);
+    add_e[1].cv     = fold("-", add_e[1].type, add_e[2].cv, mul_e.cv);
+    add_e[1].valid  = add_e[2].valid and mul_e.valid
+                      and numeric(add_e[2].type) and numeric(mul_e.type);
+}
+
+mul_e : unary_e
+ER {
+    unary_e.env_in = mul_e.env_in;
+    mul_e.type = unary_e.type;  mul_e.cv = unary_e.cv;  mul_e.valid = unary_e.valid;
+}
+| mul_e STAR unary_e
+ER {
+    mul_e[2].env_in = mul_e[1].env_in;
+    unary_e.env_in  = mul_e[1].env_in;
+    mul_e[1].type   = arith(mul_e[2].type, unary_e.type);
+    mul_e[1].cv     = fold("*", mul_e[1].type, mul_e[2].cv, unary_e.cv);
+    mul_e[1].valid  = mul_e[2].valid and unary_e.valid
+                      and numeric(mul_e[2].type) and numeric(unary_e.type);
+}
+| mul_e SLASH unary_e
+ER {
+    mul_e[2].env_in = mul_e[1].env_in;
+    unary_e.env_in  = mul_e[1].env_in;
+    mul_e[1].type   = arith(mul_e[2].type, unary_e.type);
+    mul_e[1].cv     = fold("/", mul_e[1].type, mul_e[2].cv, unary_e.cv);
+    mul_e[1].valid  = mul_e[2].valid and unary_e.valid
+                      and numeric(mul_e[2].type) and numeric(unary_e.type)
+                      and (unary_e.cv != 0);
+}
+
+unary_e : atom
+ER {
+    atom.env_in = unary_e.env_in;
+    unary_e.type = atom.type;  unary_e.cv = atom.cv;  unary_e.valid = atom.valid;
+}
+| MINUS unary_e
+ER {
+    unary_e[2].env_in = unary_e[1].env_in;
+    unary_e[1].type   = unary_e[2].type if numeric(unary_e[2].type) else "error";
+    unary_e[1].cv     = -unary_e[2].cv if (numeric(unary_e[2].type) and unary_e[2].cv is not None) else None;
+    unary_e[1].valid  = unary_e[2].valid and numeric(unary_e[2].type);
+}
+
+atom : INT
+ER { atom.type = "int";    atom.cv = int(INT);     atom.valid = True; }
+| FLOAT
+ER { atom.type = "float";  atom.cv = float(FLOAT); atom.valid = True; }
+| STRING
+ER { atom.type = "string"; atom.cv = None;         atom.valid = True; }
+| "true"
+ER { atom.type = "bool";   atom.cv = None;         atom.valid = True; }
+| "false"
+ER { atom.type = "bool";   atom.cv = None;         atom.valid = True; }
+| ID
+ER {
+    atom.type  = type_of(atom.env_in, str(ID));
+    atom.cv    = cv_of(atom.env_in, str(ID));
+    atom.valid = declared(atom.env_in, str(ID))
+                 and kind_of(atom.env_in, str(ID)) != "exercise";
+}
+| "(" expr ")"
+ER {
+    expr.env_in = atom.env_in;
+    atom.type = expr.type;  atom.cv = expr.cv;  atom.valid = expr.valid;
+}
+
+// ---------- lexical ----------
+RELOP : "==" | "!=" | "<=" | ">=" | "<" | ">"
+PLUS : "+"
+MINUS : "-"
+STAR : "*"
+SLASH : "/"
+
+T_INT : "int"
+T_FLOAT : "float"
+T_BOOL : "bool"
+T_STRING : "string"
+
+FLOAT.2 : /[0-9]+\.[0-9]+/
+INT : /[0-9]+/
+STRING : /"[^"\n]*"/
+ID : /[A-Za-z_][A-Za-z0-9_]*/
+DAY : "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday"
+
+COMMENT : /\/\/[^\n]*/
+%import common.WS
+%ignore WS
+%ignore COMMENT
+"""
