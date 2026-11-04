@@ -1,4 +1,39 @@
 ag_grammar = r"""
+// =====================================================================
+// LiftPlan attribute grammar
+//
+// Notation
+//   IA(x) / SA(x)  inherited / synthesised attributes of symbol x
+//   ER { ... }     semantic equations of a production
+//   x[1]           left-hand side when x also occurs on the right;
+//                  x[2], ... are the right-hand occurrences
+//
+// Attributes
+//   env_in/env_out symbol table (list of scopes) before / after a construct
+//   valid          the construct is semantically correct
+//   type, cv       type of an expression and its constant value, if known
+//                  (cv is None whenever the value cannot be known statically)
+//
+// CHECKED (properties that syntax cannot decide)
+//   1. declaration before use; no redeclaration in the same scope
+//   2. only variables are assignable; `do` takes only exercises
+//   3. type compatibility (int is accepted where float is expected)
+//   4. a *known* rpe is in [1, 10]; division by a *constant* zero
+//   5. weeks numbered 1, 2, 3, ...; a day appears once per week;
+//      session names are unique within a day
+//
+// DELIBERATELY NOT CHECKED
+//   - values that depend on variables or on last_rpe / fatigue (only
+//     constants have a known value), so e.g. `rpe x` or `/ x` is not range-checked
+//   - sign or magnitude of sets, reps, load and rest (e.g. negative or zero)
+//   - routine names (not inserted in the environment, so duplicates pass)
+//   - the keys of exercise attributes (any identifier is accepted)
+//   - chronological order of the days inside a week
+//
+// L-attributed: inherited attributes depend only on the parent and on left
+// siblings, so one left-to-right depth-first pass evaluates everything.
+// =====================================================================
+
 // ---------- attribute declarations ----------
 SA(start)  { valid : bool }
 
@@ -21,17 +56,17 @@ IA(routine_decl) { env_in : list }
 SA(routine_decl) { valid : bool }
 
 IA(weeks)  { env_in : list }
-SA(weeks)  { count : int, valid : bool }
-IA(week)   { env_in : list, expected : int }
+SA(weeks)  { count : int, valid : bool }       // count = weeks seen so far
+IA(week)   { env_in : list, expected : int }   // expected = number this week must have
 SA(week)   { valid : bool }
 
 IA(days)     { env_in : list }
-SA(days)     { names : set, valid : bool }
-IA(day)      { env_in : list, seen : set }
+SA(days)     { names : set, valid : bool }     // names = days seen so far
+IA(day)      { env_in : list, seen : set }     // seen = days before this one
 SA(day)      { name : str, valid : bool }
 
 IA(sessions) { env_in : list }
-SA(sessions) { names : set, valid : bool }
+SA(sessions) { names : set, valid : bool }     // names = sessions seen so far in the day
 IA(session)  { env_in : list, seen : set }
 SA(session)  { name : str, valid : bool }
 
@@ -53,16 +88,19 @@ IA(expr, or_e, and_e, not_e, rel_e, add_e, mul_e, unary_e, atom) { env_in : list
 SA(expr, or_e, and_e, not_e, rel_e, add_e, mul_e, unary_e, atom) { type : str, cv : any, valid : bool }
 
 // ---------- program and declarations ----------
+// The environment flows left to right through the declarations: a name is
+// visible only after its declaration, so an exercise declared AFTER a
+// routine cannot be used inside it.
 start : "program" ID "{" decls "}"
 ER {
-    decls.env_in = push(BUILTINS);
+    decls.env_in = push(BUILTINS);             // last_rpe and fatigue are predefined
     start.valid  = decls.valid;
 }
 
 decls : decls decl
 ER {
     decls[2].env_in  = decls[1].env_in;
-    decl.env_in      = decls[2].env_out;
+    decl.env_in      = decls[2].env_out;       // environment left by the previous declarations
     decls[1].env_out = decl.env_out;
     decls[1].valid   = decls[2].valid and decl.valid;
 }
@@ -93,19 +131,26 @@ ER {
 | routine_decl
 ER {
     routine_decl.env_in = decl.env_in;
-    decl.env_out        = decl.env_in;
+    decl.env_out        = decl.env_in;         // a routine declares no name: not checked for duplicates
     decl.valid          = routine_decl.valid;
 }
 
+// Redeclaration is only an error in the SAME scope (declared_here); an inner
+// block may shadow an outer name, including the predefined ones.
+// The initialiser is evaluated with env_in, so `var y : int = y;` fails:
+// the new name is not yet visible in its own initialiser.
 var_decl : "var" ID ":" type "=" expr ";"
 ER {
     expr.env_in = var_decl.env_in;
     var_decl.valid = expr.valid
                      and not declared_here(var_decl.env_in, str(ID))
                      and compat(type.t, expr.type);
-    var_decl.env_out = insert(var_decl.env_in, str(ID), (type.t, "var", None));
+    var_decl.env_out = insert(var_decl.env_in, str(ID), (type.t, "var", None));   // cv = None: a variable may change
 }
 
+// Same checks as var_decl, but the constant keeps its value (cv), so it can be
+// used by later expressions and by the volume computation. If the initialiser
+// has the wrong type, no value is stored.
 const_decl : "const" ID ":" type "=" expr ";"
 ER {
     expr.env_in = const_decl.env_in;
@@ -121,6 +166,8 @@ type : T_INT    ER { type.t = "int"; }
      | T_BOOL   ER { type.t = "bool"; }
      | T_STRING ER { type.t = "string"; }
 
+// An exercise has no type: it is stored with role "exercise", so it can only
+// be used by `do` and never as a value.
 exercise_decl : "exercise" ID "{" attrs "}"
 ER {
     attrs.env_in = exercise_decl.env_in;
@@ -141,6 +188,8 @@ ER {
     attrs.valid = attr.valid;
 }
 
+// Checked: the VALUE must be a string. Not checked: the KEY (a mistyped key
+// such as `catgory` is accepted).
 attr : ID ":" expr
 ER {
     expr.env_in = attr.env_in;
@@ -148,39 +197,44 @@ ER {
 }
 
 // ---------- routine / week / day / session ----------
+// Structural constraints are passed between siblings through inherited
+// attributes (expected, seen) that are computed from the LEFT siblings.
 routine_decl : "routine" ID "{" weeks "}"
 ER {
     weeks.env_in       = routine_decl.env_in;
     routine_decl.valid = weeks.valid;
 }
 
+// Weeks must be exactly 1, 2, 3, ...: skipping or repeating a number is an error.
 weeks : weeks week
 ER {
     weeks[2].env_in = weeks[1].env_in;
     week.env_in     = weeks[1].env_in;
-    week.expected   = weeks[2].count + 1;
+    week.expected   = weeks[2].count + 1;      // next number, from the weeks on the left
     weeks[1].count  = weeks[2].count + 1;
     weeks[1].valid  = weeks[2].valid and week.valid;
 }
 | week
 ER {
     week.env_in   = weeks.env_in;
-    week.expected = 1;
+    week.expected = 1;                         // the first week must be week 1
     weeks.count   = 1;
     weeks.valid   = week.valid;
 }
 
 week : "week" INT "{" days "}"
 ER {
-    days.env_in = push(week.env_in);
+    days.env_in = push(week.env_in);           // week scope; only blocks declare names, so it stays empty
     week.valid  = (int(INT) == week.expected) and days.valid;
 }
 
+// Each day may appear once per week, in ANY order (no chronological check).
+// A day opens no scope of its own.
 days : days day
 ER {
     days[2].env_in = days[1].env_in;
     day.env_in     = days[1].env_in;
-    day.seen       = days[2].names;
+    day.seen       = days[2].names;            // days already used in this week
     days[1].names  = days[2].names | set([day.name]);
     days[1].valid  = days[2].valid and day.valid;
 }
@@ -199,11 +253,13 @@ ER {
     day.valid       = (day.name not in day.seen) and sessions.valid;
 }
 
+// Several sessions per day are allowed; their names must differ within the day
+// (the same name may be reused on another day or in another week).
 sessions : sessions session
 ER {
     sessions[2].env_in = sessions[1].env_in;
     session.env_in     = sessions[1].env_in;
-    session.seen       = sessions[2].names;
+    session.seen       = sessions[2].names;    // sessions already in this day
     sessions[1].names  = sessions[2].names | set([session.name]);
     sessions[1].valid  = sessions[2].valid and session.valid;
 }
@@ -218,11 +274,14 @@ ER {
 session : "session" STRING block
 ER {
     block.env_in  = session.env_in;
-    session.name  = str(STRING).strip('"');
+    session.name  = str(STRING).strip('"');    // quotes are not part of the name
     session.valid = (session.name not in session.seen) and block.valid;
 }
 
 // ---------- statements ----------
+// A block opens a new scope: declarations inside it are visible in the
+// following statements and disappear when the block ends. This is the
+// scope of sessions and of the bodies of if / else / repeat / circuit.
 block : "{" stmts "}"
 ER {
     stmts.env_in = push(block.env_in);
@@ -232,7 +291,7 @@ ER {
 stmts : stmts stmt
 ER {
     stmts[2].env_in  = stmts[1].env_in;
-    stmt.env_in      = stmts[2].env_out;
+    stmt.env_in      = stmts[2].env_out;       // environment left by the previous statements
     stmts[1].env_out = stmt.env_out;
     stmts[1].valid   = stmts[2].valid and stmt.valid;
 }
@@ -242,6 +301,8 @@ ER {
     stmts.valid   = True;
 }
 
+// Only declarations change the environment; every other statement passes
+// env_in through unchanged.
 stmt : var_decl
 ER { var_decl.env_in = stmt.env_in;
      stmt.env_out = var_decl.env_out;   stmt.valid = var_decl.valid; }
@@ -267,6 +328,8 @@ ER { repeat.env_in = stmt.env_in;
 ER { circuit.env_in = stmt.env_in;
      stmt.env_out = stmt.env_in;        stmt.valid = circuit.valid; }
 
+// The target must be a declared VARIABLE: constants, exercises and the
+// predefined last_rpe / fatigue are rejected even though they are declared.
 assign : ID "=" expr ";"
 ER {
     expr.env_in  = assign.env_in;
@@ -276,6 +339,9 @@ ER {
                    and compat(type_of(assign.env_in, str(ID)), expr.type);
 }
 
+// `do` needs a declared exercise; sets and reps must be INTEGERS (2.5 is
+// rejected). Not checked: positive values, or that the exercise name is
+// spelled consistently with its attributes.
 perform : "do" ID "sets" expr "reps" expr loadopt rpeopt ";"
 ER {
     expr[1].env_in = perform.env_in;
@@ -288,6 +354,8 @@ ER {
                      and loadopt.valid and rpeopt.valid;
 }
 
+// load only has to be numeric (int or float); no sign or unit is checked.
+// cv is passed up because the volume uses it.
 loadopt : "load" expr
 ER {
     expr.env_in    = loadopt.env_in;
@@ -296,10 +364,13 @@ ER {
 }
 |
 ER {
-    loadopt.cv    = 1;
+    loadopt.cv    = 1;                         // no load: bodyweight, factor 1
     loadopt.valid = True;
 }
 
+// The range [1, 10] is checked ONLY when the value is known (cv is not None):
+// `rpe 15` is rejected, but `rpe x` with a variable x passes. rpe may be a
+// float (e.g. 7.5).
 rpeopt : "rpe" expr
 ER {
     expr.env_in   = rpeopt.env_in;
@@ -316,9 +387,12 @@ ER {
 rest : "rest" expr ";"
 ER {
     expr.env_in = rest.env_in;
-    rest.valid  = expr.valid and numeric(expr.type);
+    rest.valid  = expr.valid and numeric(expr.type);   // numeric only: no unit, no sign
 }
 
+// The condition must be bool. Each block opens its own scope, so a name
+// declared in one branch is not visible in the other. Two productions
+// because the else branch is optional.
 if_stmt : "if" "(" expr ")" block
 ER {
     expr.env_in    = if_stmt.env_in;
@@ -334,6 +408,8 @@ ER {
                       and block[1].valid and block[2].valid;
 }
 
+// Counts must be INTEGERS. circuit has exactly the same equations as repeat;
+// they differ only in domain meaning.
 repeat : "repeat" expr "times" block
 ER {
     expr.env_in   = repeat.env_in;
@@ -349,12 +425,22 @@ ER {
 }
 
 // ---------- expressions ----------
+// Types and constant values (cv) are synthesised bottom-up; env_in is
+// inherited top-down so identifiers can be looked up. The rules that only
+// copy attributes up the precedence layers (expr, or_e, ... unary_e : atom)
+// are kept for completeness.
+//
+// The special type "error" marks an ill-formed expression. It is accepted by
+// compat, numeric, integer and boolean, so ONE mistake produces ONE error
+// instead of a cascade.
 expr : or_e
 ER {
     or_e.env_in = expr.env_in;
     expr.type = or_e.type;  expr.cv = or_e.cv;  expr.valid = or_e.valid;
 }
 
+// and / or / not need bool operands and always yield bool; their value is
+// never folded (cv = None).
 or_e : and_e
 ER {
     and_e.env_in = or_e.env_in;
@@ -398,6 +484,8 @@ ER {
     not_e[1].valid  = not_e[2].valid and boolean(not_e[2].type);
 }
 
+// < <= > >= need numeric operands; == and != also accept two operands of the
+// SAME type (so two strings or two bools can be compared for equality).
 rel_e : add_e
 ER {
     add_e.env_in = rel_e.env_in;
@@ -413,6 +501,9 @@ ER {
                   and comparable(str(RELOP), add_e[1].type, add_e[2].type);
 }
 
+// Arithmetic needs numeric operands. The result is int only if BOTH operands
+// are int, otherwise float. The value is folded only when both operands are
+// known; integer division truncates (fold uses // for int).
 add_e : mul_e
 ER {
     mul_e.env_in = add_e.env_in;
@@ -459,7 +550,7 @@ ER {
     mul_e[1].cv     = fold("/", mul_e[1].type, mul_e[2].cv, unary_e.cv);
     mul_e[1].valid  = mul_e[2].valid and unary_e.valid
                       and numeric(mul_e[2].type) and numeric(unary_e.type)
-                      and (unary_e.cv != 0);
+                      and (unary_e.cv != 0);   // only a CONSTANT zero divisor is caught (x / y passes)
 }
 
 unary_e : atom
@@ -475,6 +566,10 @@ ER {
     unary_e[1].valid  = unary_e[2].valid and numeric(unary_e[2].type);
 }
 
+// Literals have a fixed type and value. An identifier takes its type from the
+// environment, and its value ONLY if it is a constant (variables give
+// cv = None). Using an exercise name as a value is rejected. An undeclared
+// name gets type "error" and valid = False.
 atom : INT
 ER { atom.type = "int";    atom.cv = int(INT);     atom.valid = True; }
 | FLOAT
