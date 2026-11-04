@@ -291,7 +291,7 @@ class Checker(Interpreter):
 
 
 # ---------------------------------------------------------------------
-parser = Lark.open("liftplan.lark", parser="lalr", propagate_positions=True, debug=True)
+parser = Lark.open("grammar.lark", parser="lalr", propagate_positions=True, debug=True)
 
 
 def check(source):
